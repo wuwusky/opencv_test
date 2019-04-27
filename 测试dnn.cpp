@@ -1,27 +1,26 @@
 #include <opencv2/dnn.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/highgui.hpp>
+#include <opencv2/core/utils/trace.hpp>
+using namespace cv;
+using namespace cv::dnn;
+
 #include <fstream>
 #include <iostream>
 #include <cstdlib>
-//--------------------------------------------------------------------------------------------
-//--------------------------------------------------------------------------------------------
 using namespace std;
-using namespace cv;
-using namespace cv::dnn;
-//--------------------------------------------------------------------------------------------
-//--------------------------------------------------------------------------------------------
+
 /* Find best class for the blob (i. e. class with maximal probability) */
-void getMaxClass(dnn::Blob &probBlob, int *classId, double *classProb)
+static void getMaxClass(const Mat &probBlob, int *classId, double *classProb)
 {
-	Mat probMat = probBlob.matRefConst().reshape(1, 1); //reshape the blob to 1x1000 matrix
+	Mat probMat = probBlob.reshape(1, 1); //reshape the blob to 1x1000 matrix
 	Point classNumber;
 
 	minMaxLoc(probMat, NULL, classProb, NULL, &classNumber);
 	*classId = classNumber.x;
 }
 
-std::vector<String> readClassNames(const char *filename = "synset_words.txt")
+static std::vector<String> readClassNames(const char *filename = "synset_words.txt")
 {
 	std::vector<String> classNames;
 
@@ -37,7 +36,7 @@ std::vector<String> readClassNames(const char *filename = "synset_words.txt")
 	{
 		std::getline(fp, name);
 		if (name.length())
-			classNames.push_back( name.substr(name.find(' ')+1) );
+			classNames.push_back(name.substr(name.find(' ') + 1));
 	}
 
 	fp.close();
@@ -46,23 +45,18 @@ std::vector<String> readClassNames(const char *filename = "synset_words.txt")
 
 int main(int argc, char **argv)
 {
+	CV_TRACE_FUNCTION();
+
 	String modelTxt = "bvlc_googlenet.prototxt";
 	String modelBin = "bvlc_googlenet.caffemodel";
-	String imageFile = "4.jpg";
+	String imageFile = "3.jpg";
 
-	//! [Create the importer of Caffe model]
-	Ptr<dnn::Importer> importer;
-	try                                     //Try to import Caffe GoogleNet model
-	{
-		importer = dnn::createCaffeImporter(modelTxt, modelBin);
-	}
-	catch (const cv::Exception &err)        //Importer can throw errors, we will catch them
-	{
-		std::cerr << err.msg << std::endl;
-	}
-	//! [Create the importer of Caffe model]
+	//! [Read and initialize network]
+	Net net = dnn::readNetFromCaffe(modelTxt, modelBin);
+	//! [Read and initialize network]
 
-	if (!importer)
+	//! [Check that network was read successfully]
+	if (net.empty())
 	{
 		std::cerr << "Can't load network by using the following files: " << std::endl;
 		std::cerr << "prototxt:   " << modelTxt << std::endl;
@@ -71,48 +65,48 @@ int main(int argc, char **argv)
 		std::cerr << "http://dl.caffe.berkeleyvision.org/bvlc_googlenet.caffemodel" << std::endl;
 		exit(-1);
 	}
-
-	//! [Initialize network]
-	dnn::Net net;
-	importer->populateNet(net);
-	importer.release();                     //We don't need importer anymore
-	//! [Initialize network]
+	//! [Check that network was read successfully]
 
 	//! [Prepare blob]
 	Mat img = imread(imageFile);
-	resize(img, img, Size(600, 400));
-	imshow("≤‚ ‘Õº∆¨",img);
 	if (img.empty())
 	{
 		std::cerr << "Can't read image from the file: " << imageFile << std::endl;
 		exit(-1);
 	}
 
-	resize(img, img, Size(224, 224));       //GoogLeNet accepts only 224x224 RGB-images
-	dnn::Blob inputBlob = dnn::Blob(img);   //Convert Mat to dnn::Blob image batch
-	//! [Prepare blob]
+	//GoogLeNet accepts only 224x224 RGB-images
+	Mat inputBlob = blobFromImage(img, 1, Size(224, 224),
+		Scalar(104, 117, 123));   //Convert Mat to batch of images
+								  //! [Prepare blob]
 
-	//! [Set input blob]
-	net.setBlob(".data", inputBlob);        //set the network input
-	//! [Set input blob]
-
-	//! [Make forward pass]
-	net.forward();                          //compute output
-	//! [Make forward pass]
+	Mat prob;
+	cv::TickMeter t;
+	for (int i = 0; i < 10; i++)
+	{
+		CV_TRACE_REGION("forward");
+		//! [Set input blob]
+		net.setInput(inputBlob, "data");        //set the network input
+												//! [Set input blob]
+		t.start();
+		//! [Make forward pass]
+		prob = net.forward("prob");                          //compute output
+															 //! [Make forward pass]
+		t.stop();
+	}
 
 	//! [Gather output]
-	dnn::Blob prob = net.getBlob("prob");   //gather output of "prob" layer
-
 	int classId;
 	double classProb;
 	getMaxClass(prob, &classId, &classProb);//find the best class
-	//! [Gather output]
+											//! [Gather output]
 
-	//! [Print results]
+											//! [Print results]
 	std::vector<String> classNames = readClassNames();
 	std::cout << "Best class: #" << classId << " '" << classNames.at(classId) << "'" << std::endl;
 	std::cout << "Probability: " << classProb * 100 << "%" << std::endl;
 	//! [Print results]
-	waitKey(0);
+	std::cout << "Time: " << (double)t.getTimeMilli() / t.getCounter() << " ms (average from " << t.getCounter() << " iterations)" << std::endl;
+
 	return 0;
 } //main
